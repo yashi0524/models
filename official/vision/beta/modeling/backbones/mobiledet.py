@@ -20,7 +20,6 @@ from typing import Optional, Dict, Any, Tuple
 import dataclasses
 import tensorflow as tf
 from official.modeling import hyperparams
-from official.modeling import tf_utils
 from official.vision.beta.modeling.backbones import factory
 from official.vision.beta.modeling.layers import nn_blocks
 from official.vision.beta.modeling.layers import nn_layers
@@ -451,19 +450,9 @@ class MobileDet(tf.keras.Model):
     if len(input_shape) != 4:
       raise ValueError('Expected rank 4 input, was: %d' % len(input_shape))
 
-    # The current_stride variable keeps track of the output stride of the
-    # activations, i.e., the running product of convolution strides up to the
-    # current network layer. This allows us to invoke atrous convolution
-    # whenever applying the next convolution would result in the activations
-    # having output stride larger than the target output_stride.
-    current_stride = 1
-
-    # The atrous convolution rate parameter.
-    rate = 1
-
     net = inputs
     endpoints = {}
-    endpoint_level = 2
+    endpoint_level = 1
     for i, block_def in enumerate(self._decoded_specs):
       block_name = 'block_group_{}_{}'.format(block_def.block_fn, i)
 
@@ -497,6 +486,7 @@ class MobileDet(tf.keras.Model):
             se_inner_activation=block_def.activation,
             se_gating_activation='sigmoid',
             se_round_down_protect=False,
+            expand_se_in_filters=True,
             activation=block_def.activation,
             use_depthwise=block_def.use_depthwise,
             use_residual=block_def.use_residual,
@@ -570,6 +560,7 @@ class MobileDet(tf.keras.Model):
   def output_specs(self):
     """A dict of {level: TensorShape} pairs for the model output."""
     return self._output_specs
+
 
 @factory.register_backbone_builder('mobiledet')
 def build_mobilenet(
