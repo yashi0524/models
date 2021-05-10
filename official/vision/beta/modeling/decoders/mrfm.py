@@ -20,6 +20,7 @@ from functools import partial
 import tensorflow as tf
 
 from official.modeling import tf_utils
+from official.vision.beta.ops import preprocess_ops
 
 layers = tf.keras.layers
 
@@ -183,37 +184,6 @@ def get_depth_fn(
     return max(new_depth, min_depth)
   
   return multiply_depth
-
-
-def fixed_padding(
-    inputs: tf.Tensor,
-    kernel_size: int,
-    rate: int = 1) -> tf.Tensor:
-  """Pads the input along the spatial dimensions independently of input size.
-
-  Args:
-    inputs: A [batch, height_in, width_in, channels] tensor.
-    kernel_size: An `int` kernel size to be used in the conv2d or max_pool2d
-      operation. Should be a positive integer.
-    rate: An `int` rate for atrous convolution.
-
-  Returns:
-    output: A tensor of size [batch, height_out, width_out, channels] with the
-      input, either intact (if kernel_size == 1) or padded (if kernel_size > 1).
-  """
-  kernel_size_effective = kernel_size + (kernel_size - 1) * (rate - 1)
-  pad_total = kernel_size_effective - 1
-  pad_beg = pad_total // 2
-  pad_end = pad_total - pad_beg
-  if tf.keras.backend.image_data_format() == 'channels_last':
-    padded_inputs = tf.pad(inputs, [[0, 0], [pad_beg, pad_end],
-                                    [pad_beg, pad_end], [0, 0]])
-  else:
-    padded_inputs = tf.pad(inputs, [[0, 0], [0, 0],
-                                    [pad_beg, pad_end],
-                                    [pad_beg, pad_end]])
-  
-  return padded_inputs
 
 
 def validate_feature_map_layout(
@@ -450,7 +420,8 @@ class MRFM(tf.keras.Model):
     stride = 2
     padding = 'VALID' if self._use_explicit_padding else 'SAME'
     if self._use_explicit_padding:
-      kernel_fixed_padding = partial(fixed_padding, self._kernel_size)
+      kernel_fixed_padding = partial(preprocess_ops.fixed_padding,
+                                     self._kernel_size)
       x = layers.Lambda(kernel_fixed_padding)(x)
     if self._use_depthwise:
       x = layers.DepthwiseConv2D(

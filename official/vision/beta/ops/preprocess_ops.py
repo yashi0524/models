@@ -61,6 +61,123 @@ def clip_or_pad_to_fixed_size(input_tensor, size, constant_values=0):
   return padded_tensor
 
 
+def fixed_padding(
+    inputs: tf.Tensor,
+    kernel_size: int,
+    rate: int = 1) -> tf.Tensor:
+  """Pads the input along the spatial dimensions independently of input size.
+
+  Args:
+    inputs: A [batch, height_in, width_in, channels] tensor.
+    kernel_size: An `int` kernel size to be used in the conv2d or max_pool2d
+      operation. Should be a positive integer.
+    rate: An `int` rate for atrous convolution.
+
+  Returns:
+    output: A tensor of size [batch, height_out, width_out, channels] with the
+      input, either intact (if kernel_size == 1) or padded (if kernel_size > 1).
+  """
+  kernel_size_effective = kernel_size + (kernel_size - 1) * (rate - 1)
+  pad_total = kernel_size_effective - 1
+  pad_beg = pad_total // 2
+  pad_end = pad_total - pad_beg
+  if tf.keras.backend.image_data_format() == 'channels_last':
+    padded_inputs = tf.pad(inputs, [[0, 0], [pad_beg, pad_end],
+                                    [pad_beg, pad_end], [0, 0]])
+  else:
+    padded_inputs = tf.pad(inputs, [[0, 0], [0, 0],
+                                    [pad_beg, pad_end],
+                                    [pad_beg, pad_end]])
+  
+  return padded_inputs
+
+
+def pad_to_multiple(tensor, multiple):
+  """Returns the tensor zero padded to the specified multiple.
+
+  Appends 0s to the end of the first and second dimension (height and width) of
+  the tensor until both dimensions are a multiple of the input argument
+  'multiple'. E.g. given an input tensor of shape [1, 3, 5, 1] and an input
+  multiple of 4, PadToMultiple will append 0s so that the resulting tensor will
+  be of shape [1, 4, 8, 1].
+
+  Args:
+    tensor: rank 4 float32 tensor, where
+            tensor -> [batch_size, height, width, channels].
+    multiple: the multiple to pad to.
+
+  Returns:
+    padded_tensor: the tensor zero padded to the specified multiple.
+  """
+  if multiple == 1:
+    return tensor
+  
+  def _get_dim_as_int(dim):
+    """Utility to get v1 or v2 TensorShape dim as an int.
+
+    Args:
+      dim: The TensorShape dimension to get as an int
+
+    Returns:
+      None or an int.
+    """
+    try:
+      return dim.value
+    except AttributeError:
+      return dim
+  
+  tensor_shape = tensor.get_shape()
+  tensor_shape.assert_has_rank(rank=4)
+  batch_size = _get_dim_as_int(tensor_shape[0])
+  tensor_height = _get_dim_as_int(tensor_shape[1])
+  tensor_width = _get_dim_as_int(tensor_shape[2])
+  tensor_depth = _get_dim_as_int(tensor_shape[3])
+  
+  if batch_size is None:
+    batch_size = tf.shape(tensor)[0]
+  
+  if tensor_height is None:
+    tensor_height = tf.shape(tensor)[1]
+    padded_tensor_height = tf.cast(
+        tf.math.ceil(
+            tf.cast(tensor_height, dtype=tf.float32) /
+            tf.cast(multiple, dtype=tf.float32)),
+        dtype=tf.int32) * multiple
+  else:
+    padded_tensor_height = int(
+        math.ceil(float(tensor_height) / multiple) * multiple)
+  
+  if tensor_width is None:
+    tensor_width = tf.shape(tensor)[2]
+    padded_tensor_width = tf.cast(
+        tf.math.ceil(
+            tf.cast(tensor_width, dtype=tf.float32) /
+            tf.cast(multiple, dtype=tf.float32)),
+        dtype=tf.int32) * multiple
+  else:
+    padded_tensor_width = int(
+        math.ceil(float(tensor_width) / multiple) * multiple)
+  
+  if tensor_depth is None:
+    tensor_depth = tf.shape(tensor)[3]
+  
+  # Use tf.concat instead of tf.pad to preserve static shape
+  if padded_tensor_height != tensor_height:
+    height_pad = tf.zeros([
+        batch_size, padded_tensor_height - tensor_height, tensor_width,
+        tensor_depth
+    ], dtype=tensor.dtype)
+    tensor = tf.concat([tensor, height_pad], 1)
+  if padded_tensor_width != tensor_width:
+    width_pad = tf.zeros([
+        batch_size, padded_tensor_height, padded_tensor_width - tensor_width,
+        tensor_depth
+    ], dtype=tensor.dtype)
+    tensor = tf.concat([tensor, width_pad], 2)
+  
+  return tensor
+
+
 def normalize_image(image,
                     offset=(0.485, 0.456, 0.406),
                     scale=(0.229, 0.224, 0.225)):
