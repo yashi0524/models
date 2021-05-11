@@ -22,6 +22,7 @@ import tensorflow as tf
 from official.modeling import tf_utils
 
 # Type annotations.
+
 States = Dict[str, tf.Tensor]
 Activation = Union[str, Callable]
 
@@ -971,3 +972,145 @@ class Conv3D(tf.keras.layers.Conv3D, CausalConvMixin):
     """Computes the spatial output shape from the input shape."""
     shape = super(Conv3D, self)._spatial_output_shape(spatial_input_shape)
     return self._buffered_spatial_output_shape(shape)
+
+
+class FreezableSyncBatchNorm(tf.keras.layers.experimental.SyncBatchNormalization
+                             ):
+  """Sync Batch normalization layer (Ioffe and Szegedy, 2014).
+
+  This is a `freezable` batch norm layer that supports setting the `training`
+  parameter in the __init__ method rather than having to set it either via
+  the Keras learning phase or via the `call` method parameter. This layer will
+  forward all other parameters to the Keras `SyncBatchNormalization` layer
+
+  This is class is necessary because Object Detection model training sometimes
+  requires batch normalization layers to be `frozen` and used as if it was
+  evaluation time, despite still training (and potentially using dropout layers)
+
+  Like the default Keras SyncBatchNormalization layer, this will normalize the
+  activations of the previous layer at each batch,
+  i.e. applies a transformation that maintains the mean activation
+  close to 0 and the activation standard deviation close to 1.
+
+  Input shape:
+      Arbitrary. Use the keyword argument `input_shape`
+      (tuple of integers, does not include the samples axis)
+      when using this layer as the first layer in a model.
+
+  Output shape:
+      Same shape as input.
+
+  References:
+      - [Batch Normalization: Accelerating Deep Network Training by Reducing
+        Internal Covariate Shift](https://arxiv.org/abs/1502.03167)
+  """
+  
+  def __init__(self, training=None, **kwargs):
+    """Constructor.
+
+    Args:
+      training: If False, the layer will normalize using the moving average and
+        std. dev, without updating the learned avg and std. dev.
+        If None or True, the layer will follow the keras SyncBatchNormalization
+        layer strategy of checking the Keras learning phase at `call` time to
+        decide what to do.
+      **kwargs: The keyword arguments to forward to the keras
+        SyncBatchNormalization layer constructor.
+    """
+    super(FreezableSyncBatchNorm, self).__init__(**kwargs)
+    self._training = training
+  
+  def call(self, inputs, training=None):
+    # Override the call arg only if the batchnorm is frozen. (Ignore None)
+    if self._training is False:  # pylint: disable=g-bool-id-comparison
+      training = self._training
+    return super(FreezableSyncBatchNorm, self).call(inputs, training=training)
+
+
+class FreezableBatchNorm(tf.keras.layers.BatchNormalization):
+  """Batch normalization layer (Ioffe and Szegedy, 2014).
+
+  This is a `freezable` batch norm layer that supports setting the `training`
+  parameter in the __init__ method rather than having to set it either via
+  the Keras learning phase or via the `call` method parameter. This layer will
+  forward all other parameters to the default Keras `BatchNormalization`
+  layer
+
+  This is class is necessary because Object Detection model training sometimes
+  requires batch normalization layers to be `frozen` and used as if it was
+  evaluation time, despite still training (and potentially using dropout layers)
+
+  Like the default Keras BatchNormalization layer, this will normalize the
+  activations of the previous layer at each batch,
+  i.e. applies a transformation that maintains the mean activation
+  close to 0 and the activation standard deviation close to 1.
+
+  Args:
+    training: If False, the layer will normalize using the moving average and
+      std. dev, without updating the learned avg and std. dev.
+      If None or True, the layer will follow the keras BatchNormalization layer
+      strategy of checking the Keras learning phase at `call` time to decide
+      what to do.
+    **kwargs: The keyword arguments to forward to the keras BatchNormalization
+        layer constructor.
+
+  Input shape:
+      Arbitrary. Use the keyword argument `input_shape`
+      (tuple of integers, does not include the samples axis)
+      when using this layer as the first layer in a model.
+
+  Output shape:
+      Same shape as input.
+
+  References:
+      - [Batch Normalization: Accelerating Deep Network Training by Reducing
+        Internal Covariate Shift](https://arxiv.org/abs/1502.03167)
+  """
+  
+  def __init__(self, training=None, **kwargs):
+    super(FreezableBatchNorm, self).__init__(**kwargs)
+    self._training = training
+  
+  def call(self, inputs, training=None):
+    # Override the call arg only if the batchnorm is frozen. (Ignore None)
+    if self._training is False:  # pylint: disable=g-bool-id-comparison
+      training = self._training
+    return super(FreezableBatchNorm, self).call(inputs, training=training)
+
+
+def build_freezable_batch_norm(
+    use_bn: bool,
+    use_sync_bn: bool,
+    training=None,
+    **bn_params):
+  """Returns a Batch Normalization layer with the appropriate hyperparams.
+
+  If the hyperparams are configured to not use batch normalization,
+  this will return a Keras Lambda layer that only applies tf.Identity,
+  without doing any normalization.
+
+  Optionally overrides values in the batch_norm hyperparam dict. Overrides
+  only apply to individual calls of this method, and do not affect
+  future calls.
+
+  Args:
+    use_bn: A `bool`. If True, use batch normalization.
+    use_sync_bn: A `bool`. If True, use synchronized batch normalization.
+    training: A `bool`. If True, the normalization layer will normalize using
+      the batch statistics. If False, the normalization layer will be frozen
+      and will act as if it is being used for inference. If None, the layer
+      will look up the Keras learning phase at `call` time to decide what to do.
+    **bn_params: batch normalization construction args.
+
+  Returns: Either a FreezableBatchNorm layer (if use_bn is True),
+    or a Keras Lambda layer that applies the identity (if use_bn is False)
+  """
+  if use_bn:
+    if use_sync_bn:
+      return FreezableSyncBatchNorm(
+          training=training, **bn_params)
+    else:
+      return FreezableBatchNorm(
+          training=training, **bn_params)
+  else:
+    return tf.keras.layers.Lambda(tf.identity)
