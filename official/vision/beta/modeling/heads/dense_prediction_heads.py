@@ -22,6 +22,7 @@ import numpy as np
 import tensorflow as tf
 
 from official.modeling import tf_utils
+from official.vision.beta.modeling.layers import nn_layers
 
 
 @tf.keras.utils.register_keras_serializable(package='Vision')
@@ -506,4 +507,261 @@ class RPNHead(tf.keras.layers.Layer):
 
   @classmethod
   def from_config(cls, config):
+    return cls(**config)
+
+
+@tf.keras.utils.register_keras_serializable(package='Vision')
+class SSDHead(tf.keras.layers.Layer):
+  """Creates a SSD head."""
+
+  def __init__(
+      self,
+      min_level: int,
+      max_level: int,
+      num_classes: int,
+      num_anchors_per_location_list: List[int],
+      is_training: bool,
+      kernel_size: int = 3,
+      use_depthwise: bool = True,
+      activation: str = 'relu6',
+      use_sync_bn: bool = False,
+      freeze_norm: bool = False,
+      norm_momentum: float = 0.99,
+      norm_epsilon: float = 0.001,
+      add_background_class: bool = True,
+      class_prediction_bias_init: float = 0.0,
+      kernel_regularizer: Optional[tf.keras.regularizers.Regularizer] = None,
+      bias_regularizer: Optional[tf.keras.regularizers.Regularizer] = None,
+      **kwargs):
+    """Initializes a SSD head.
+
+    Args:
+      min_level: An `int` number of minimum feature level.
+      max_level: An `int` number of maximum feature level.
+      num_classes: An `int` number of classes to predict.
+      num_anchors_per_location_list: A list of integers representing the number of
+        box predictions to be made per spatial location for each feature map.
+      is_training: Indicates whether the BoxPredictor is in training mode.
+      kernel_size: An `int` kernel size used for building prediction heads.
+      use_depthwise: A `bool` indicating whether depthwise convolution is used
+        for building extra feature layers.
+      activation: A `str` that indicates which activation is used, e.g. 'relu',
+        'swish', etc.
+      use_sync_bn: A `bool` that indicates whether to use synchronized batch
+        normalization across different replicas.
+      norm_momentum: A `float` of normalization momentum for the moving average.
+      norm_epsilon: A `float` added to variance to avoid dividing by zero.
+      freeze_norm: A `bool`. Whether to freeze batch norm parameters during
+        training or not. When training with a small batch size (e.g. 1), it is
+        desirable to freeze batch norm update and use pretrained batch norm
+        params.
+      add_background_class: Whether to add an implicit background class.
+      class_prediction_bias_init: constant value to initialize bias of the last
+        conv2d layer before class prediction.
+      kernel_regularizer: A `tf.keras.regularizers.Regularizer` object for
+        Conv2D. Default is None.
+      bias_regularizer: A `tf.keras.regularizers.Regularizer` object for Conv2D.
+      **kwargs: Additional keyword arguments to be passed.
+    """
+    super(SSDHead, self).__init__(**kwargs)
+    self._min_level = min_level
+    self._max_level = max_level
+    self._num_classes = num_classes
+    self._num_anchors_per_location_list = num_anchors_per_location_list
+    self._is_training = is_training
+    self._kernel_size = kernel_size
+    self._use_depthwise = use_depthwise
+    self._activation = activation
+    self._use_sync_bn = use_sync_bn
+    self._freeze_norm = freeze_norm
+    self._norm_momentum = norm_momentum
+    self._norm_epsilon = norm_epsilon
+    self._add_background_class = add_background_class
+    self._class_prediction_bias_init = class_prediction_bias_init
+    self._kernel_regularizer = kernel_regularizer
+    self._bias_regularizer = bias_regularizer
+
+    if tf.keras.backend.image_data_format() == 'channels_last':
+      self._bn_axis = -1
+    else:
+      self._bn_axis = 1
+    self._activation = tf_utils.get_activation(activation)
+
+    self._conv_hyperparams = {
+        'kernel_initializer': tf.keras.initializers.RandomNormal(stddev=0.03),
+        'kernel_regularizer': self._kernel_regularizer,
+        'bias_regularizer': self._bias_regularizer
+    }
+    
+    self._bn_hyperparams = {
+        'axis': self._bn_axis,
+        'momentum': self._norm_momentum,
+        'epsilon': self._norm_epsilon,
+    }
+    self._cls_convs = []
+    self._box_convs = []
+
+  def _build_box_head(self, num_pred_per_location: int):
+    box_encoder_layers = []
+    if self._use_depthwise:
+      box_encoder_layers.extend([
+          tf.keras.layers.DepthwiseConv2D(
+              kernel_size=[self._kernel_size, self._kernel_size],
+              padding='SAME',
+              depth_multiplier=1,
+              strides=1,
+              dilation_rate=1,
+              **self._conv_hyperparams),
+          nn_layers.build_freezable_batch_norm(
+              use_bn=True,
+              use_sync_bn=self._use_sync_bn,
+              training=(self._is_training and not self._freeze_norm),
+              **self._bn_hyperparams),
+          self._activation_fn,
+          tf.keras.layers.Conv2D(
+              filters=num_pred_per_location * 4,
+              kernel_size=[1, 1],
+              use_bias=True,
+              **self._conv_hyperparams)
+      ])
+    else:
+      box_encoder_layers.append(
+          tf.keras.layers.Conv2D(
+              filters=num_pred_per_location * 4,
+              kernel_size=[self._kernel_size, self._kernel_size],
+              padding='SAME',
+              use_bias=True,
+              bias_initializer=tf.zeros_initializer(),
+              **self._conv_hyperparams)
+      )
+    return box_encoder_layers
+  
+  def _build_class_head(self,
+                        num_class_slots: int,
+                        num_pred_per_location: int):
+    class_encoder_layers = []
+    if self._use_depthwise:
+      class_encoder_layers.extend([
+          tf.keras.layers.DepthwiseConv2D(
+              kernel_size=[self._kernel_size, self._kernel_size],
+              padding='SAME',
+              depth_multiplier=1,
+              strides=1,
+              dilation_rate=1,
+              **self._conv_hyperparams),
+          nn_layers.build_freezable_batch_norm(
+              use_bn=True,
+              use_sync_bn=self._use_sync_bn,
+              training=(self._is_training and not self._freeze_norm),
+              **self._bn_hyperparams),
+          self._activation_fn,
+          tf.keras.layers.Conv2D(
+              filters=num_pred_per_location * num_class_slots,
+              kernel_size=[1, 1],
+              use_bias=True,
+              **self._conv_hyperparams)
+      ])
+    else:
+      class_encoder_layers.append(
+          tf.keras.layers.Conv2D(
+              filters=num_pred_per_location * num_class_slots,
+              kernel_size=[self._kernel_size, self._kernel_size],
+              padding='SAME',
+              use_bias=True,
+              bias_initializer=tf.constant_initializer(
+                  self._class_prediction_bias_init),
+              **self._conv_hyperparams)
+      )
+    return class_encoder_layers
+
+  def build(self, input_shape: Union[tf.TensorShape, List[tf.TensorShape]]):
+    """Creates the variables of the head."""
+    # Class net
+    num_class_slots = (
+      self._num_classes + 1 if self._add_background_class else self._num_classes)
+    min_level = self._config_dict['min_level']
+    max_level = self._config_dict['max_level']
+
+    for index, level in enumerate(range(min_level,  max_level + 1)):
+      self._cls_convs.append(
+          self._build_class_head(
+              num_class_slots=num_class_slots,
+              num_pred_per_location=self._num_anchors_per_location_list[index])
+      )
+      self._box_convs.append(
+          self._build_box_head(
+              num_pred_per_location=self._num_anchors_per_location_list[index]
+          )
+      )
+    
+    super(SSDHead, self).build(input_shape)
+    
+  def call(self, features: Mapping[str, tf.Tensor], **kwargs):
+    """Forward pass of the RetinaNet head.
+
+    Args:
+      features: A `dict` of `tf.Tensor` where
+        - key: A `str` of the level of the multilevel features.
+        - values: A `tf.Tensor`, the feature map tensors, whose shape is
+            [batch, height_l, width_l, channels].
+
+    Returns:
+      scores: A `dict` of `tf.Tensor` which includes scores of the predictions.
+        - key: A `str` of the level of the multilevel predictions.
+        - values: A `tf.Tensor` of the box scores predicted from a particular
+            feature level, whose shape is
+            [batch, height_l, width_l, num_classes * num_anchors_per_location].
+      boxes: A `dict` of `tf.Tensor` which includes coordinates of the
+        predictions.
+        - key: A `str` of the level of the multilevel predictions.
+        - values: A `tf.Tensor` of the box scores predicted from a particular
+            feature level, whose shape is
+            [batch, height_l, width_l, 4 * num_anchors_per_location].
+    """
+    scores = {}
+    boxes = {}
+    
+    min_level = self._config_dict['min_level']
+    max_level = self._config_dict['max_level']
+    for index, level in enumerate(range(min_level,  max_level + 1)):
+      this_level_features = features[str(level)]
+      x = this_level_features
+      for head in self._box_convs[index]:
+        for layer in head:
+          x = layer(x)
+      boxes[str(level)] = x
+    
+    for index, level in enumerate(range(min_level,  max_level + 1)):
+      this_level_features = features[str(level)]
+      x = this_level_features
+      for head in self._cls_convs[index]:
+        for layer in head:
+          x = layer(x)
+      scores[str(level)] = x
+    
+    return scores, boxes
+
+  def get_config(self) -> Mapping[str, Any]:
+    config = {
+        'min_level': self._min_level,
+        'max_level': self._max_level,
+        'num_classes': self._num_classes,
+        'num_anchors_per_location_list': self._num_anchors_per_location_list,
+        'is_training': self._is_training,
+        'kernel_size': self._kernel_size,
+        'use_depthwise': self._use_depthwise,
+        'activation': self._activation,
+        'use_sync_bn': self._use_sync_bn,
+        'freeze_norm': self._freeze_norm,
+        'add_background_class': self._add_background_class,
+        'class_prediction_bias_init': self._class_prediction_bias_init,
+        'norm_momentum': self._norm_momentum,
+        'norm_epsilon': self._norm_epsilon,
+        'kernel_regularizer': self._kernel_regularizer,
+        'bias_regularizer': self._bias_regularizer,
+    }
+    return config
+
+  @classmethod
+  def from_config(cls, config, custom_objects=None):
     return cls(**config)
