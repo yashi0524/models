@@ -81,9 +81,9 @@ class MRFM(tf.keras.Model):
      By default convolution kernel size is set to 3, and it can be customized
      by caller.
 
-  An example of the configuration for Inception V3:
+  An example of the configuration:
   {
-    'from_layer': ['Mixed_5d', 'Mixed_6e', 'Mixed_7c', '', '', ''],
+    'from_layer': ['2', '3', '4', '', '', ''],
     'layer_depth': [-1, -1, -1, 512, 256, 128]
   }
 

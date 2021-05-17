@@ -17,6 +17,8 @@
 import collections
 # Import libraries
 import tensorflow as tf
+import numpy as np
+
 from official.vision import keras_cv
 from official.vision.detection.utils.object_detection import balanced_positive_negative_sampler
 from official.vision.detection.utils.object_detection import box_list
@@ -331,6 +333,142 @@ class RpnAnchorLabeler(AnchorLabeler):
     return score_targets_dict, box_targets_dict
 
 
+class SSDAnchor(object):
+  """Anchor class for SSD detectors.
+  
+    "SSD: Single Shot MultiBox Detector"
+    Wei Liu, Dragomir Anguelov, Dumitru Erhan, Christian Szegedy, Scott Reed,
+    Cheng-Yang Fu, Alexander C. Berg
+    (see Section 2.2: Choosing scales and aspect ratios for default boxes)
+  """
+
+  def __init__(self,
+               min_level,
+               num_layers,
+               min_scale,
+               max_scale,
+               scales,
+               aspect_ratios,
+               anchor_size,
+               image_size,
+               interpolated_scale_aspect_ratio=1.0):
+    """Constructs multiscale anchors.
+
+    Args:
+      min_level: Minimum level in output feature maps.
+      num_layers: An `int` number of grid layers to create anchors for (actual
+        grid sizes passed in at generation time)
+      min_scale: scale of anchors corresponding to finest resolution (float)
+      max_scale: scale of anchors corresponding to coarsest resolution (float)
+      scales: As list of anchor scales to use. When not None and not empty,
+        min_scale and max_scale are not used.
+      aspect_ratios: A list representing the aspect raito
+        anchors added on each level. The number indicates the ratio of width to
+        height. For instances, aspect_ratios=[1.0, 2.0, 0.5] adds three anchors
+        on each scale level.
+      anchor_size: A number representing the scale of size of the base
+        anchor to the feature stride 2^level.
+      image_size: a list of integer numbers or Tensors representing
+        [height, width] of the input image size.The image_size should be divided
+        by the largest feature stride 2^max_level.
+      interpolated_scale_aspect_ratio: An additional anchor is added with this
+        aspect ratio and a scale interpolated between the scale for a layer
+        and the scale for the next layer (1.0 for the last layer).
+        This anchor is not included if this value is 0.
+    """
+    self.min_level = min_level
+    self.num_layers = num_layers
+    self.min_scale = min_scale
+    self.max_scale = max_scale
+    self.aspect_ratios = aspect_ratios
+    self.anchor_size = anchor_size
+    self.image_size = image_size
+    self.interpolated_scale_aspect_ratio = interpolated_scale_aspect_ratio
+
+    if scales is None or not scales:
+      self.scales = [min_scale +
+                     (max_scale - min_scale) * i / (self.num_layers - 1)
+                     for i in range(self.num_layers)]
+    else:
+      self.scales = scales
+    
+    # Add 1.0 to the end, which will only be used in scale_next below and used
+    # for computing an interpolated scale for the largest scale in the list.
+    scales += [1.0]
+    
+    self.boxes = self._generate_boxes()
+
+  def _generate_single_scale_boxes(self, scale, aspect_ratio, level):
+    stride = 2 ** level
+    base_anchor_size = self.anchor_size * stride * scale
+    aspect_x = aspect_ratio ** 0.5
+    aspect_y = aspect_ratio ** -0.5
+    half_anchor_size_x = base_anchor_size * aspect_x / 2.0
+    half_anchor_size_y = base_anchor_size * aspect_y / 2.0
+    x = tf.range(stride / 2, self.image_size[1], stride)
+    y = tf.range(stride / 2, self.image_size[0], stride)
+    xv, yv = tf.meshgrid(x, y)
+    xv = tf.cast(tf.reshape(xv, [-1]), dtype=tf.float32)
+    yv = tf.cast(tf.reshape(yv, [-1]), dtype=tf.float32)
+    # Tensor shape Nx4.
+    boxes = tf.stack([yv - half_anchor_size_y, xv - half_anchor_size_x,
+                      yv + half_anchor_size_y, xv + half_anchor_size_x],
+                     axis=1)
+    return boxes
+  
+  def _generate_boxes(self):
+    """Generates multiscale anchor boxes.
+
+    Returns:
+      a Tensor of shape [N, 4], representing anchor boxes of all levels
+      concatenated together.
+    """
+    boxes_all = []
+    for index, scale, scale_next in zip(
+        range(self.num_layers), self.scales[:-1], self.scales[1:]):
+      level = self.min_level + index
+      boxes_l = []
+      for aspect_ratio in self.aspect_ratios:
+        boxes = self._generate_single_scale_boxes(scale, aspect_ratio, level)
+        boxes_l.append(boxes)
+      if self.interpolated_scale_aspect_ratio > 0.0:
+        boxes = self._generate_single_scale_boxes(
+            np.sqrt(scale*scale_next),
+            self.interpolated_scale_aspect_ratio,
+            level)
+        boxes_l.append(boxes)
+      # Concat anchors on the same level to tensor shape NxAx4.
+      boxes_l = tf.stack(boxes_l, axis=1)
+      boxes_l = tf.reshape(boxes_l, [-1, 4])
+      boxes_all.append(boxes_l)
+    return tf.concat(boxes_all, axis=0)
+
+  def unpack_labels(self, labels):
+    """Unpacks an array of labels into multiscales labels."""
+    unpacked_labels = collections.OrderedDict()
+    count = 0
+    for index in range(self.num_layers):
+      level = self.min_level + index
+      feat_size_y = tf.cast(self.image_size[0] / 2 ** level, tf.int32)
+      feat_size_x = tf.cast(self.image_size[1] / 2 ** level, tf.int32)
+      steps = feat_size_y * feat_size_x * self.anchors_per_location
+      unpacked_labels[str(level)] = tf.reshape(
+          labels[count:count + steps], [feat_size_y, feat_size_x, -1])
+      count += steps
+    return unpacked_labels
+
+  @property
+  def anchors_per_location(self):
+    num_per_location = len(self.aspect_ratios)
+    if self.interpolated_scale_aspect_ratio > 0:
+      return num_per_location + 1
+    return num_per_location
+
+  @property
+  def multilevel_boxes(self):
+    return self.unpack_labels(self.boxes)
+
+
 def build_anchor_generator(min_level, max_level, num_scales, aspect_ratios,
                            anchor_size):
   """Build anchor generator from levels."""
@@ -349,6 +487,47 @@ def build_anchor_generator(min_level, max_level, num_scales, aspect_ratios,
       aspect_ratios=aspect_ratios,
       strides=strides)
   return anchor_gen
+
+
+def build_ssd_anchor_generator(min_level, num_layers, scales,
+                               aspect_ratios, interpolated_scale_aspect_ratio,
+                               anchor_size):
+  """Build anchor generator from levels."""
+  anchor_sizes = collections.OrderedDict()
+  strides = collections.OrderedDict()
+
+  level_scales = []
+  level_aspect_ratios = [aspect_ratios for _ in range(num_layers)]
+  interpolated_scales = []
+  interpolated_aspect_ratios = [1.0 for _ in range(num_layers)]
+
+  for index, scale, scale_next in zip(
+      range(num_layers), scales[:-1], scales[1:]):
+    level = min_level + index
+    stride = 2**level
+    strides[str(level)] = stride
+    anchor_sizes[str(level)] = anchor_size * stride
+    level_scales.append([scale])
+    if interpolated_scale_aspect_ratio > 0.0:
+      interpolated_scales.append([np.sqrt(scale*scale_next)])
+  
+  def _ssd_anchor_gen(image_size):
+    level_anchor_gen = keras_cv.ops.AnchorGenerator(
+        anchor_sizes=anchor_sizes,
+        scales=level_scales,
+        aspect_ratios=level_aspect_ratios,
+        strides=strides)
+    level_anchors = level_anchor_gen(image_size)
+    if interpolated_scale_aspect_ratio > 0.0:
+      interpolated_anchor_gen = keras_cv.ops.AnchorGenerator(
+          anchor_sizes=anchor_sizes,
+          scales=interpolated_scales,
+          aspect_ratios=interpolated_aspect_ratios,
+          strides=strides)
+      interpolated_anchor = interpolated_anchor_gen(image_size)
+      level_anchors = tf.concat([level_anchors, interpolated_anchor], axis=-1)
+    return level_anchors
+  return _ssd_anchor_gen
 
 
 def unpack_targets(targets, anchor_boxes_dict):

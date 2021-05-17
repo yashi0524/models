@@ -517,7 +517,7 @@ class SSDHead(tf.keras.layers.Layer):
   def __init__(
       self,
       min_level: int,
-      max_level: int,
+      num_layers: int,
       num_classes: int,
       num_anchors_per_location_list: List[int],
       is_training: bool,
@@ -537,7 +537,8 @@ class SSDHead(tf.keras.layers.Layer):
 
     Args:
       min_level: An `int` number of minimum feature level.
-      max_level: An `int` number of maximum feature level.
+      num_layers: An `int` number of grid layers to create anchors for (actual
+        grid sizes passed in at generation time)
       num_classes: An `int` number of classes to predict.
       num_anchors_per_location_list: A list of integers representing the number of
         box predictions to be made per spatial location for each feature map.
@@ -565,7 +566,7 @@ class SSDHead(tf.keras.layers.Layer):
     """
     super(SSDHead, self).__init__(**kwargs)
     self._min_level = min_level
-    self._max_level = max_level
+    self._num_layers = num_layers
     self._num_classes = num_classes
     self._num_anchors_per_location_list = num_anchors_per_location_list
     self._is_training = is_training
@@ -679,10 +680,8 @@ class SSDHead(tf.keras.layers.Layer):
     # Class net
     num_class_slots = (
       self._num_classes + 1 if self._add_background_class else self._num_classes)
-    min_level = self._config_dict['min_level']
-    max_level = self._config_dict['max_level']
 
-    for index, level in enumerate(range(min_level,  max_level + 1)):
+    for index in range(self._num_layers):
       self._cls_convs.append(
           self._build_class_head(
               num_class_slots=num_class_slots,
@@ -721,9 +720,8 @@ class SSDHead(tf.keras.layers.Layer):
     scores = {}
     boxes = {}
     
-    min_level = self._config_dict['min_level']
-    max_level = self._config_dict['max_level']
-    for index, level in enumerate(range(min_level,  max_level + 1)):
+    for index in range(self._num_layers):
+      level = index + self._min_level
       this_level_features = features[str(level)]
       x = this_level_features
       for head in self._box_convs[index]:
@@ -731,7 +729,8 @@ class SSDHead(tf.keras.layers.Layer):
           x = layer(x)
       boxes[str(level)] = x
     
-    for index, level in enumerate(range(min_level,  max_level + 1)):
+    for index in range(self._num_layers):
+      level = index + self._min_level
       this_level_features = features[str(level)]
       x = this_level_features
       for head in self._cls_convs[index]:
@@ -744,7 +743,7 @@ class SSDHead(tf.keras.layers.Layer):
   def get_config(self) -> Mapping[str, Any]:
     config = {
         'min_level': self._min_level,
-        'max_level': self._max_level,
+        'num_layers': self._num_layers,
         'num_classes': self._num_classes,
         'num_anchors_per_location_list': self._num_anchors_per_location_list,
         'is_training': self._is_training,
