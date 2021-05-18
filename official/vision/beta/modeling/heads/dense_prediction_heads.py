@@ -520,7 +520,6 @@ class SSDHead(tf.keras.layers.Layer):
       num_layers: int,
       num_classes: int,
       num_anchors_per_location_list: List[int],
-      is_training: bool,
       kernel_size: int = 3,
       use_depthwise: bool = True,
       activation: str = 'relu6',
@@ -542,7 +541,6 @@ class SSDHead(tf.keras.layers.Layer):
       num_classes: An `int` number of classes to predict.
       num_anchors_per_location_list: A list of integers representing the number of
         box predictions to be made per spatial location for each feature map.
-      is_training: Indicates whether the BoxPredictor is in training mode.
       kernel_size: An `int` kernel size used for building prediction heads.
       use_depthwise: A `bool` indicating whether depthwise convolution is used
         for building extra feature layers.
@@ -569,7 +567,6 @@ class SSDHead(tf.keras.layers.Layer):
     self._num_layers = num_layers
     self._num_classes = num_classes
     self._num_anchors_per_location_list = num_anchors_per_location_list
-    self._is_training = is_training
     self._kernel_size = kernel_size
     self._use_depthwise = use_depthwise
     self._activation = activation
@@ -616,7 +613,7 @@ class SSDHead(tf.keras.layers.Layer):
           nn_layers.build_freezable_batch_norm(
               use_bn=True,
               use_sync_bn=self._use_sync_bn,
-              training=(self._is_training and not self._freeze_norm),
+              training=(not self._freeze_norm),
               **self._bn_hyperparams),
           self._activation_fn,
           tf.keras.layers.Conv2D(
@@ -653,7 +650,7 @@ class SSDHead(tf.keras.layers.Layer):
           nn_layers.build_freezable_batch_norm(
               use_bn=True,
               use_sync_bn=self._use_sync_bn,
-              training=(self._is_training and not self._freeze_norm),
+              training=(not self._freeze_norm),
               **self._bn_hyperparams),
           self._activation_fn,
           tf.keras.layers.Conv2D(
@@ -746,7 +743,6 @@ class SSDHead(tf.keras.layers.Layer):
         'num_layers': self._num_layers,
         'num_classes': self._num_classes,
         'num_anchors_per_location_list': self._num_anchors_per_location_list,
-        'is_training': self._is_training,
         'kernel_size': self._kernel_size,
         'use_depthwise': self._use_depthwise,
         'activation': self._activation,

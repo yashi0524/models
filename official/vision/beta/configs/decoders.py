@@ -14,7 +14,7 @@
 
 # Lint as: python3
 """Decoders configurations."""
-from typing import Optional, List
+from typing import Optional, List, Mapping
 
 # Import libraries
 import dataclasses
@@ -54,6 +54,18 @@ class ASPP(hyperparams.Config):
 
 
 @dataclasses.dataclass
+class MRFM(hyperparams.Config):
+  fml_from_layer: List[str] = dataclasses.field(default_factory=list)
+  fml_layer_depth: List[int] = dataclasses.field(default_factory=list)
+  depth_multiplier: float = 1.0
+  min_depth: int = 16
+  insert_1x1_conv: bool = True
+  kernel_size: int = 3
+  use_explicit_padding: bool = False
+  use_depthwise: bool = False
+
+
+@dataclasses.dataclass
 class Decoder(hyperparams.OneOfConfig):
   """Configuration for decoders.
 
@@ -66,3 +78,4 @@ class Decoder(hyperparams.OneOfConfig):
   nasfpn: NASFPN = NASFPN()
   identity: Identity = Identity()
   aspp: ASPP = ASPP()
+  mrfm: MRFM = MRFM()

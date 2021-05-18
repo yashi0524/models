@@ -103,7 +103,6 @@ class MRFM(tf.keras.Model):
       feature_map_layout: Mapping[str, List],
       depth_multiplier: float,
       min_depth: int,
-      is_training: bool = True,
       insert_1x1_conv: bool = True,
       kernel_size: int = 3,
       use_explicit_padding: bool = False,
@@ -144,8 +143,6 @@ class MRFM(tf.keras.Model):
         'use_depthwise' is set to True.
       depth_multiplier: A `float` depth multiplier for convolutional layers.
       min_depth: An `int` minimum depth for convolutional layers.
-      is_training: A `bool` indicating whether the feature generator is
-        in training mode.
       insert_1x1_conv: A `bool` indicating whether an additional 1x1
         convolution should be inserted before shrinking the feature map.
       kernel_size: An `int` kernel size used for building extra feature layers.
@@ -176,7 +173,6 @@ class MRFM(tf.keras.Model):
     self._feature_map_layout = feature_map_layout
     self._depth_multiplier = depth_multiplier
     self._min_depth = min_depth
-    self._is_training = is_training
     self._insert_1x1_conv = insert_1x1_conv
     self._kernel_size = kernel_size
     self._use_explicit_padding = use_explicit_padding
@@ -273,7 +269,7 @@ class MRFM(tf.keras.Model):
       x = nn_layers.build_freezable_batch_norm(
           use_bn=True,
           use_sync_bn=self._use_sync_bn,
-          training=(self._is_training and not self._freeze_norm),
+          training=(not self._freeze_norm),
           **self._bn_hyperparams)(x)
       x = self._activation_fn(x)
     
@@ -293,7 +289,7 @@ class MRFM(tf.keras.Model):
       x = nn_layers.build_freezable_batch_norm(
           use_bn=True,
           use_sync_bn=self._use_sync_bn,
-          training=(self._is_training and not self._freeze_norm),
+          training=(not self._freeze_norm),
           **self._bn_hyperparams)(x)
       x = self._activation_fn(x)
       
@@ -306,7 +302,7 @@ class MRFM(tf.keras.Model):
       x = nn_layers.build_freezable_batch_norm(
           use_bn=True,
           use_sync_bn=self._use_sync_bn,
-          training=(self._is_training and not self._freeze_norm),
+          training=(not self._freeze_norm),
           **self._bn_hyperparams)(x)
       x = self._activation_fn(x)
     else:
@@ -319,7 +315,7 @@ class MRFM(tf.keras.Model):
       x = nn_layers.build_freezable_batch_norm(
           use_bn=True,
           use_sync_bn=self._use_sync_bn,
-          training=(self._is_training and not self._freeze_norm),
+          training=(not self._freeze_norm),
           **self._bn_hyperparams)(x)
       x = self._activation_fn(x)
     return tf.identity(x, name=layer_name)
@@ -330,7 +326,6 @@ class MRFM(tf.keras.Model):
         'feature_map_layout': self._feature_map_layout,
         'depth_multiplier': self._depth_multiplier,
         'min_depth': self._min_depth,
-        'is_training': self._is_training,
         'insert_1x1_conv': self._insert_1x1_conv,
         'kernel_size': self._kernel_size,
         'use_explicit_padding': self._use_explicit_padding,

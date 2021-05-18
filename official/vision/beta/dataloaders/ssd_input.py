@@ -35,9 +35,11 @@ class Parser(parser.Parser):
                output_size,
                min_level,
                num_layers,
-               scales,
+               min_scale,
+               max_scale,
                aspect_ratios,
                anchor_size,
+               scales=None,
                interpolated_scale_aspect_ratio=1.0,
                match_threshold=0.5,
                unmatched_threshold=0.5,
@@ -58,14 +60,16 @@ class Parser(parser.Parser):
       min_level: `int` number of minimum level of the output feature pyramid.
       num_layers: An `int` number of grid layers to create anchors for (actual
         grid sizes passed in at generation time)
-      scales: As list of anchor scales to use. When not None and not empty,
-        min_scale and max_scale are not used.
+      min_scale: scale of anchors corresponding to finest resolution (float)
+      max_scale: scale of anchors corresponding to coarsest resolution (float)
       aspect_ratios: `list` of float numbers representing the aspect raito
         anchors added on each level. The number indicates the ratio of width to
         height. For instances, aspect_ratios=[1.0, 2.0, 0.5] adds three anchors
         on each scale level.
       anchor_size: `float` number representing the scale of size of the base
         anchor to the feature stride 2^level.
+      scales: As list of anchor scales to use. When not None and not empty,
+        min_scale and max_scale are not used.
       interpolated_scale_aspect_ratio: An additional anchor is added with this
         aspect ratio and a scale interpolated between the scale for a layer
         and the scale for the next layer (1.0 for the last layer).
@@ -102,7 +106,14 @@ class Parser(parser.Parser):
     self._output_size = output_size
     self._min_level = min_level
     self._num_layers = num_layers
-    self._scales = scales
+    self._min_scale = min_scale
+    self._max_scale = max_scale
+    if scales is None or not scales:
+      self._scales = [min_scale +
+                      (max_scale - min_scale) * i / (num_layers - 1)
+                      for i in range(num_layers)]
+    else:
+      self._scales = scales
     self._aspect_ratios = aspect_ratios
     self._interpolated_scale_aspect_ratio = interpolated_scale_aspect_ratio
     self._anchor_size = anchor_size
