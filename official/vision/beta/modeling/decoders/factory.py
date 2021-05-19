@@ -86,13 +86,12 @@ def build_decoder(
         activation=norm_activation_config.activation,
         kernel_regularizer=l2_regularizer)
   elif decoder_type == 'mrfm':
-    feature_map_layout = {
-        'from_layer': decoder_cfg.fml_from_layer,
-        'layer_depth': decoder_cfg.fml_layer_depth
-    }
     decoder = decoders.MRFM(
         input_specs=input_specs,
-        feature_map_layout=feature_map_layout,
+        feature_map_layout={
+            decoders.mrfm.FROM_LAYER: decoder_cfg.fml_from_layer,
+            decoders.mrfm.LAYER_DEPTH: decoder_cfg.fml_layer_depth
+        },
         depth_multiplier=decoder_cfg.depth_multiplier,
         min_depth=decoder_cfg.min_depth,
         insert_1x1_conv=decoder_cfg.insert_1x1_conv,

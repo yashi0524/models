@@ -62,7 +62,7 @@ def round_filters(filters: int,
                   divisor: int = 8,
                   min_depth: Optional[int] = None,
                   round_down_protect: bool = True,
-                  skip: bool = False):
+                  skip: bool = False) -> int:
   """Rounds number of filters based on width multiplier."""
   orig_f = filters
   if skip or not multiplier:

@@ -366,6 +366,8 @@ def build_ssd(
   if isa_ratio > 0.0:
     num_anchors_per_location += 1
 
+  assert model_config.num_layers == len(model_config.decoder.mrfm.fml_from_layer)
+
   head = dense_prediction_heads.SSDHead(
       min_level=model_config.min_level,
       num_layers=model_config.num_layers,

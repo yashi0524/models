@@ -96,7 +96,7 @@ class RevNet(hyperparams.Config):
 
 @dataclasses.dataclass
 class MobileDet(hyperparams.Config):
-  """Mobilenet config."""
+  """Mobiledet config."""
   model_id: str = 'MobileDetCPU'
   filter_size_scale: float = 1.0
 
@@ -114,6 +114,7 @@ class Backbone(hyperparams.OneOfConfig):
     spinenet: spinenet backbone config.
     spinenet_mobile: mobile spinenet backbone config.
     mobilenet: mobilenet backbone config.
+    mobiledet: mobiledet backbone config.
   """
   type: Optional[str] = None
   resnet: ResNet = ResNet()

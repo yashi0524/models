@@ -512,7 +512,7 @@ class RPNHead(tf.keras.layers.Layer):
 
 @tf.keras.utils.register_keras_serializable(package='Vision')
 class SSDHead(tf.keras.layers.Layer):
-  """Creates a SSD head."""
+  """Creates an SSD head."""
 
   def __init__(
       self,

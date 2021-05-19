@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Contains definitions of MobileDet Networks."""
+"""Definitions of MobileDet Networks."""
 
 from typing import Optional, Dict, Any, Tuple
 
@@ -362,7 +362,6 @@ class MobileDet(tf.keras.Model):
       # The followings should be kept the same most of the times.
       min_depth: int = 8,
       divisible_by: int = 8,
-      stochastic_depth_drop_rate: float = 0.0,
       regularize_depthwise: bool = False,
       use_sync_bn: bool = False,
       **kwargs):
@@ -389,7 +388,6 @@ class MobileDet(tf.keras.Model):
         constraint when filter_size_scale >= 1.
       divisible_by: An `int` that ensures all inner dimensions are divisible by
         this number.
-      stochastic_depth_drop_rate: A `float` of drop rate for drop connect layer.
       regularize_depthwise: If Ture, apply regularization on depthwise.
       use_sync_bn: If True, use synchronized batch normalization.
       **kwargs: Additional keyword arguments to be passed.
@@ -406,7 +404,6 @@ class MobileDet(tf.keras.Model):
     self._filter_size_scale = filter_size_scale
     self._min_depth = min_depth
     self._divisible_by = divisible_by
-    self._stochastic_depth_drop_rate = stochastic_depth_drop_rate
     self._regularize_depthwise = regularize_depthwise
     self._kernel_initializer = kernel_initializer
     self._kernel_regularizer = kernel_regularizer
@@ -541,7 +538,6 @@ class MobileDet(tf.keras.Model):
         'filter_size_scale': self._filter_size_scale,
         'min_depth': self._min_depth,
         'divisible_by': self._divisible_by,
-        'stochastic_depth_drop_rate': self._stochastic_depth_drop_rate,
         'regularize_depthwise': self._regularize_depthwise,
         'kernel_initializer': self._kernel_initializer,
         'kernel_regularizer': self._kernel_regularizer,
@@ -563,7 +559,7 @@ class MobileDet(tf.keras.Model):
 
 
 @factory.register_backbone_builder('mobiledet')
-def build_mobilenet(
+def build_mobiledet(
     input_specs: tf.keras.layers.InputSpec,
     model_config: hyperparams.Config,
     l2_regularizer: tf.keras.regularizers.Regularizer = None) -> tf.keras.Model:
@@ -578,7 +574,6 @@ def build_mobilenet(
       model_id=backbone_cfg.model_id,
       filter_size_scale=backbone_cfg.filter_size_scale,
       input_specs=input_specs,
-      stochastic_depth_drop_rate=backbone_cfg.stochastic_depth_drop_rate,
       use_sync_bn=norm_activation_config.use_sync_bn,
       norm_momentum=norm_activation_config.norm_momentum,
       norm_epsilon=norm_activation_config.norm_epsilon,

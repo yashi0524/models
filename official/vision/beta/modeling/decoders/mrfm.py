@@ -25,6 +25,8 @@ from official.vision.beta.ops import preprocess_ops
 
 layers = tf.keras.layers
 
+FROM_LAYER = 'from_layer'
+LAYER_DEPTH = 'layer_depth'
 
 def get_depth_fn(
     depth_multiplier: float,
@@ -52,12 +54,12 @@ def validate_feature_map_layout(
   if not feature_map_layout:
     return False, 'The feature_map_layout cannot be empty.'
   
-  if ('from_layer' not in feature_map_layout
-      or 'layer_depth' not in feature_map_layout):
+  if (FROM_LAYER not in feature_map_layout
+      or LAYER_DEPTH not in feature_map_layout):
     return False, 'Both from_layer and layer_depth should be provided.'
   
-  if (len(feature_map_layout['from_layer'])
-      != len(feature_map_layout['layer_depth'])):
+  if (len(feature_map_layout[FROM_LAYER])
+      != len(feature_map_layout[LAYER_DEPTH])):
     return False, 'Lengths of from_layer and layer_depth are not equal.'
   
   return True, ''
@@ -217,7 +219,7 @@ class MRFM(tf.keras.Model):
     # }
     pre_layer = 0
     base_from_layer = ''
-    for index, from_layer in enumerate(feature_map_layout['from_layer']):
+    for index, from_layer in enumerate(feature_map_layout[FROM_LAYER]):
       if from_layer:
         feats[from_layer] = inputs[from_layer]
         pre_layer = int(from_layer)
@@ -226,7 +228,7 @@ class MRFM(tf.keras.Model):
         # Build extra feature layer
         x = self._build_extra_feature_layer(
             inputs=feats[str(pre_layer)],
-            layer_depth=feature_map_layout['layer_depth'][index],
+            layer_depth=feature_map_layout[LAYER_DEPTH][index],
             layer_index=index,
             base_from_layer=base_from_layer)
         feats[str(pre_layer + 1)] = x
@@ -239,8 +241,8 @@ class MRFM(tf.keras.Model):
     
     super(MRFM, self).__init__(inputs=inputs, outputs=feats, **kwargs)
   
+  @staticmethod
   def _build_input_pyramid(
-      self,
       input_specs: Mapping[str, tf.TensorShape]) -> Dict[str, tf.keras.Input]:
     assert isinstance(input_specs, dict)
     

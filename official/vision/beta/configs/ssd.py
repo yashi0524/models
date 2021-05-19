@@ -98,7 +98,7 @@ class SSDHead(hyperparams.Config):
   use_sync_bn: bool = False
   freeze_norm: bool = False
   add_background_class: bool = True
-  class_prediction_bias_init: float = 0.0
+  class_prediction_bias_init: float = -4.6
 
 
 @dataclasses.dataclass
@@ -114,13 +114,16 @@ class DetectionGenerator(hyperparams.Config):
 class SSDModel(hyperparams.Config):
   num_classes: int = 0
   input_size: List[int] = dataclasses.field(default_factory=list)
-  min_level: int = 3
+  min_level: int = 4
   num_layers: int = 6
   anchor: SSDAnchor = SSDAnchor()
   backbone: backbones.Backbone = backbones.Backbone(
       type='mobiledet', mobiledet=backbones.MobileDet())
   decoder: decoders.Decoder = decoders.Decoder(
-      type='mrfm', mrfm=decoders.MRFM())
+      type='mrfm', mrfm=decoders.MRFM(
+          fml_from_layer=['4', '5', '', '', '', ''],
+          fml_layer_depth=[-1, -1, 512, 256, 256, 128]
+      ))
   head: SSDHead = SSDHead()
   detection_generator: DetectionGenerator = DetectionGenerator()
   norm_activation: common.NormActivation = common.NormActivation()
@@ -152,3 +155,76 @@ def retinanet() -> cfg.ExperimentConfig:
 COCO_INPUT_PATH_BASE = 'coco'
 COCO_TRAIN_EXAMPLES = 118287
 COCO_VAL_EXAMPLES = 5000
+
+
+@exp_factory.register_config_factory('ssd_mobiledet_coco')
+def ssd_mobiledet_coco() -> cfg.ExperimentConfig:
+  """COCO object detection with SSD."""
+  train_batch_size = 256
+  eval_batch_size = 8
+  steps_per_epoch = COCO_TRAIN_EXAMPLES // train_batch_size
+
+  config = cfg.ExperimentConfig(
+      runtime=cfg.RuntimeConfig(mixed_precision_dtype='bfloat16'),
+      task=SSDTask(
+          init_checkpoint='gs://cloud-tpu-checkpoints/vision-2.0/resnet50_imagenet/ckpt-28080',
+          init_checkpoint_modules='backbone',
+          annotation_file=os.path.join(COCO_INPUT_PATH_BASE,
+                                       'instances_val2017.json'),
+          model=SSDModel(
+              num_classes=91,
+              input_size=[640, 640, 3],
+              min_level=4,
+              num_layers=6),
+          losses=Losses(l2_weight_decay=1e-4),
+          train_data=DataConfig(
+              input_path=os.path.join(COCO_INPUT_PATH_BASE, 'train*'),
+              is_training=True,
+              global_batch_size=train_batch_size,
+              parser=Parser(
+                  aug_rand_hflip=True, aug_scale_min=0.5, aug_scale_max=2.0)),
+          validation_data=DataConfig(
+              input_path=os.path.join(COCO_INPUT_PATH_BASE, 'val*'),
+              is_training=False,
+              global_batch_size=eval_batch_size)),
+      trainer=cfg.TrainerConfig(
+          train_steps=72 * steps_per_epoch,
+          validation_steps=COCO_VAL_EXAMPLES // eval_batch_size,
+          validation_interval=steps_per_epoch,
+          steps_per_loop=steps_per_epoch,
+          summary_interval=steps_per_epoch,
+          checkpoint_interval=steps_per_epoch,
+          optimizer_config=optimization.OptimizationConfig({
+              'optimizer': {
+                  'type': 'sgd',
+                  'sgd': {
+                      'momentum': 0.9
+                  }
+              },
+              'learning_rate': {
+                  'type': 'stepwise',
+                  'stepwise': {
+                      'boundaries': [
+                          57 * steps_per_epoch, 67 * steps_per_epoch
+                      ],
+                      'values': [
+                          0.32 * train_batch_size / 256.0,
+                          0.032 * train_batch_size / 256.0,
+                          0.0032 * train_batch_size / 256.0
+                      ],
+                  }
+              },
+              'warmup': {
+                  'type': 'linear',
+                  'linear': {
+                      'warmup_steps': 500,
+                      'warmup_learning_rate': 0.0067
+                  }
+              }
+          })),
+      restrictions=[
+          'task.train_data.is_training != None',
+          'task.validation_data.is_training != None'
+      ])
+
+  return config
